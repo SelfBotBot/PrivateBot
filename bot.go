@@ -1,21 +1,24 @@
 package PrivateBot
 
 import (
-"errors"
-"fmt"
-"github.com/SilverCory/PrivateBot/discordio"
-"github.com/bwmarrin/discordgo"
-"strings"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/SelfBotBot/PrivateBot/discordio"
+	"github.com/bwmarrin/discordgo"
 )
 
 type Bot struct {
-	Session  *discordgo.Session
-	WaitingRooms   *WaitingRooms
+	Session          *discordgo.Session
+	WaitingRooms     *WaitingRooms
+	PrivateRoomUsers map[string]map[string]string //map[GuildID]map[UserID]ChannelID
 }
 
 func New(rooms *WaitingRooms) (*Bot, error) {
 	ret := &Bot{
-		WaitingRooms:   rooms,
+		WaitingRooms:     rooms,
+		PrivateRoomUsers: make(map[string]map[string]string),
 	}
 	var err error
 	ret.Session, err = discordgo.New("Bot " + rooms.Token)
@@ -25,16 +28,67 @@ func New(rooms *WaitingRooms) (*Bot, error) {
 	ret.Session.AddHandler(ret.botCommand)
 	ret.Session.AddHandler(ret.create)
 	ret.Session.AddHandler(ret.ready)
+	ret.Session.AddHandler(ret.voiceUpdate)
 
 	return ret, err
 }
 
 func (b *Bot) create(s *discordgo.Session, event *discordgo.GuildCreate) {
 	fmt.Println("GuildCreate for " + event.ID)
+	b.SetupGuild(event.Guild)
 }
 
 func (b *Bot) ready(s *discordgo.Session, _ *discordgo.Ready) {
 	s.UpdateStatus(0, "/private | /priv")
+}
+
+func (b *Bot) voiceUpdate(s *discordgo.Session, vsu *discordgo.VoiceStateUpdate) {
+	var waitingRoom string
+	if room, ok := b.WaitingRooms.GetRoom(vsu.GuildID); !ok {
+		return
+	} else {
+		waitingRoom = room
+	}
+
+	users, ok := b.PrivateRoomUsers[vsu.GuildID]
+	if !ok {
+		users = make(map[string]string)
+		b.PrivateRoomUsers[vsu.GuildID] = users
+	}
+
+	if vsu.ChannelID == "" {
+		delete(users, vsu.UserID)
+	} else {
+		if voiceChan, err := s.Channel(vsu.ChannelID); err != nil || voiceChan.Type != discordgo.ChannelTypeGuildVoice {
+			return
+		} else {
+			if voiceChan.UserLimit != 1 {
+				delete(users, vsu.UserID)
+			} else {
+				users[vsu.UserID] = voiceChan.ID
+			}
+		}
+	}
+
+	allBots := true
+	for k := range users {
+		user, err := s.User(k)
+		if err != nil {
+			continue
+		}
+		if !user.Bot {
+			allBots = false
+		}
+	}
+
+	if allBots {
+		for k := range users {
+			if err := s.GuildMemberMove(vsu.GuildID, k, waitingRoom); err != nil {
+				fmt.Println(err)
+			}
+		}
+	}
+
 }
 
 func (b *Bot) botCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -81,13 +135,13 @@ func (b *Bot) botCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		failedUsers := make(map[*discordgo.User]string)
 		for _, user := range m.Mentions {
-			if userChan, err := b.FindUserInGuild(user.ID, g.ID); err != nil  {
-				failedUsers[user] = "Unable to find user in VC - "+err.Error()
+			if userChan, err := b.FindUserInGuild(user.ID, g.ID); err != nil {
+				failedUsers[user] = "Unable to find user in VC - " + err.Error()
 			} else if userChan != waitingRoomID {
 				failedUsers[user] = "User isn't in the waiting room."
 			} else {
 				if err := b.Session.GuildMemberMove(g.ID, user.ID, channel); err != nil {
-					failedUsers[user] = "Unable to move user - "+err.Error()
+					failedUsers[user] = "Unable to move user - " + err.Error()
 				}
 			}
 		}
@@ -95,7 +149,7 @@ func (b *Bot) botCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
 		writer := discordio.NewMessageWriter(s, m)
 		if len(failedUsers) != 0 {
 			for k, v := range failedUsers {
-				writer.Write([]byte(k.Username + ": " + v))
+				writer.Write([]byte(discordio.Escape(k.Username) + ": " + v))
 			}
 			if err := writer.Close(); err != nil {
 				fmt.Println(err)
@@ -145,9 +199,9 @@ func (b *Bot) botCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
 			s.ChannelMessageSend(c.ID, "Unable to set the channel as a waiting room..\n```"+err.Error()+"```")
 			return
 		} else {
+			b.SetupGuild(g)
 			s.MessageReactionAdd(c.ID, m.ID, "✅")
 		}
-
 	}
 }
 
@@ -168,4 +222,26 @@ func (b *Bot) FindUserInGuild(UserID string, GuildID string) (ChannelID string, 
 
 	err = errors.New("no user in channel")
 	return
+}
+
+func (b *Bot) SetupGuild(guild *discordgo.Guild) {
+	if _, ok := b.WaitingRooms.GetRoom(guild.ID); !ok {
+		return
+	}
+
+	users, ok := b.PrivateRoomUsers[guild.ID]
+	if !ok {
+		users = make(map[string]string)
+		b.PrivateRoomUsers[guild.ID] = users
+	}
+
+	for _, channel := range guild.Channels {
+		if channel.Type == discordgo.ChannelTypeGuildVoice && channel.UserLimit == 1 {
+			for _, state := range guild.VoiceStates {
+				if state.ChannelID == channel.ID {
+					users[state.UserID] = state.ChannelID
+				}
+			}
+		}
+	}
 }

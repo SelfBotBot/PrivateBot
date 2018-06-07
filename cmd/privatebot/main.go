@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/SilverCory/PrivateBot"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/SelfBotBot/PrivateBot"
 )
 
 func main() {
