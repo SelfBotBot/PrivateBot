@@ -8,6 +8,7 @@ builds/
 # User-specific stuff
 .idea/**/workspace.xml
 .idea/vcs.xml
+.idea/watcherTasks.xml
 .idea/**/tasks.xml
 .idea/**/dictionaries
 .idea/**/shelf
