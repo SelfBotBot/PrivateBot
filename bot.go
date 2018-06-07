@@ -70,21 +70,39 @@ func (b *Bot) voiceUpdate(s *discordgo.Session, vsu *discordgo.VoiceStateUpdate)
 		}
 	}
 
-	allBots := true
-	for k := range users {
-		user, err := s.User(k)
-		if err != nil {
-			continue
-		}
-		if !user.Bot {
-			allBots = false
-		}
+	channels, err := s.GuildChannels(vsu.GuildID)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
 
-	if allBots {
-		for k := range users {
-			if err := s.GuildMemberMove(vsu.GuildID, k, waitingRoom); err != nil {
-				fmt.Println(err)
+	for _, channel := range channels {
+		if channel.Type != discordgo.ChannelTypeGuildVoice || channel.UserLimit != 1 {
+			continue
+		}
+
+		allBots := true
+		for k, v := range users {
+			if v != channel.ID {
+				continue
+			}
+
+			user, err := s.User(k)
+			if err == nil {
+				if !user.Bot {
+					allBots = false
+					break
+				}
+			}
+		}
+
+		if allBots {
+			for k, v := range users {
+				if v == channel.ID {
+					if err := s.GuildMemberMove(vsu.GuildID, k, waitingRoom); err != nil {
+						fmt.Println(err)
+					}
+				}
 			}
 		}
 	}
