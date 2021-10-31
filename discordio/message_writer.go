@@ -36,14 +36,11 @@ func Escape(s string) string {
 }
 
 func (w *MessageWriter) Write(p []byte) (n int, err error) {
-
-	// TODO past line no break
-
 	input := string(p[:])
-	lines := strings.Split(removeShittyReturns(input), "\n")
+	lines := strings.Split(removeBadReturns(input), "\n")
 	for k, v := range lines {
 		if len(v)+w.Size+1 >= 1990 {
-			w.sendMessage()
+			_ = w.sendMessage()
 		}
 
 		w.Size = len(v) + w.Size + 1
@@ -59,16 +56,13 @@ func (w *MessageWriter) Write(p []byte) (n int, err error) {
 	}
 
 	return len(p), nil
-
 }
 
 func (w *MessageWriter) Close() error {
-	w.sendMessage()
-	return nil
+	return w.sendMessage()
 }
 
-func (w *MessageWriter) sendMessage() {
-
+func (w *MessageWriter) sendMessage() error {
 	if w.TotalSent >= w.MaxSent {
 		w.Size = 0
 		w.Messages = []string{}
@@ -86,16 +80,17 @@ func (w *MessageWriter) sendMessage() {
 
 	_, err := w.Session.ChannelMessageSend(w.Message.ChannelID, msg)
 	if err != nil {
-		fmt.Println("Error occured: ", err)
+		return err
 	}
 
 	w.Size = 0
 	w.Messages = []string{}
 	w.TotalSent++
+	return nil
 
 }
 
-func removeShittyReturns(str string) string {
+func removeBadReturns(str string) string {
 	str = strings.Replace(str, "\r\n", "\n", -1)
 	str = strings.Replace(str, "\r", "\n", -1)
 	return str
